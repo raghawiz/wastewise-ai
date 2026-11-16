@@ -1,0 +1,7 @@
+{
+  "name": "wastewise-classroom-vercel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static Vercel classroom demo of browser-side CLIP waste image classification",
+  "scripts": {"dev": "npx http-server -p 3000", "start": "npx http-server -p 3000"}
+}
