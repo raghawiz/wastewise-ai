@@ -1,39 +1,53 @@
-# WasteWise AI — Vercel-ready waste sorting classroom website
+# WasteWise AI
+A React/Vite application for assisted household-waste segregation. Real browser-side CLIP inference; no backend, secrets, filename classifiers or fake fallback predictions.
 
-A responsive, static website for solid waste management presentations. No backend, Python runtime, API key or paid service is required.
+## Run
+Node 22+:
+```sh
+npm ci
+npm run dev
+npm test
+npm run build
+npm run preview -- --port 5173
+```
+Vercel: import this repository, use Vite, `npm run build`, output `dist`. No environment variables are required. Deploy a preview and test it before promoting to production.
 
-## Deployment to Vercel
+## Architecture / presentation
+1. A JPG, PNG or WebP image (maximum 12 MB) is decoded and resized locally to a maximum of 1024 pixels.
+2. A Web Worker loads quantised `Xenova/clip-vit-base-patch32` through Transformers.js 3.8.1 and ONNX WebAssembly.
+3. CLIP embeds the image and candidate descriptions, then ranks relative matches. The catalogue contains 27 household item descriptions plus out-of-scope descriptions.
+4. Scores are candidate-relative softmax scores, not calibrated confidence. A top score below 0.5, a top-two gap below 0.08, or an out-of-scope winner triggers review. These are uncalibrated heuristics, not guarantees.
+5. The user confirms or corrects the identity and condition. A separate rules layer supplies disposal guidance. Chemical contamination overrides ordinary recycling.
+6. Model/network errors produce an error, never a fabricated classification.
 
-**Option A — Import from GitHub (recommended)**
+Photos are not sent to a model API. Model downloads contact Hugging Face; typography loads from Google Fonts. There are no per-scan API fees, but browser download, memory and hosting costs still exist. Initial downloads can be substantial (the WASM runtime alone is ~21.6 MB uncompressed plus model weights). Runtime and weights can be cached by the browser; offline operation is not guaranteed.
 
-1. Extract this ZIP and add its three website files (`index.html`, `style.css`, `main.js`) to a new GitHub repository (at the root).
-2. Open https://vercel.com/new and import the GitHub repository.
-3. Framework preset: **Other**. Build command: **none**. Output directory: **.** (project root). Deploy.
-4. Vercel supplies a `.vercel.app` link to open on your phone or projector.
-
-**Option B — Vercel CLI**
-
-From this extracted folder, run `npx vercel --prod` and follow login/setup prompts. For output directory select the project root. The site has no build step.
-
-## Demo modes
-
-- **Classroom examples** are hardcoded, instant examples, clearly marked `SCRIPTED DEMO · NOT AI`. Work immediately on site load.
-- **Upload photo → Identify waste** uses the real zero-shot CLIP model (`Xenova/clip-vit-base-patch32`) with Hugging Face Transformers.js in the browser. The browser downloads model components on the first prediction; good internet is required for the initial load and CDN access.
-- The model chooses the closest matching waste item from 39 descriptions, then maps that item to one of 6 waste streams. Similarity scores are not calibrated probabilities.
+## Files
+- `src/main.jsx`: upload, drop, camera, confirmation/correction and education UI.
+- `src/worker.js`: real inference in a background worker, cancellation via termination.
+- `src/data.js`: item descriptions, explicit handling policies and review heuristics.
+- `src/style.css`: responsive layouts, bin illustrations and reduced-motion support.
+- `tests/policy.test.js`: mapping, contamination and unknown-output tests.
+- `tests/browser-workflow.mjs`, `tests/inference.mjs`: browser verification scripts. Install Chromium with `npx playwright install --with-deps chromium`. Inference fixtures are downloaded separately; they are not bundled into the app.
 
 ## Limitations
+This is an assisted identification tool, not a certified waste classifier. CLIP was not trained specifically for these six disposal categories. It can confidently misidentify objects, cannot establish chemical contents, contamination, food safety or local recycling acceptance, and does not perform multi-object detection. Users must confirm one main item per image and verify identity. Six educational categories do not imply six mandated municipal bin colours. Use specialised routes for batteries, electronics and special-care waste.
 
-Educational proof of concept, not a validated sorter. It recognizes one main object and does **not** separate items in a pile, segment objects, move bins, or guarantee local disposal correctness. Recyclability varies by collection services and cleanliness. Special, sharps and sanitary waste require appropriate local handling; always follow current municipal advice.
+The 2026 Indian SWM framework uses wet, dry, sanitary and special-care collection streams; batteries/e-waste have separate applicable rules. Guidance is deliberately conditional on local collection and acceptance.
 
-## How to explain in class
-
-1. Input is the photo.
-2. A pretrained CLIP vision–language model compares image and text descriptions.
-3. The top description identifies an example item.
-4. A rules table converts that item into the corresponding waste stream.
-5. The app displays waste category and disposal instructions.
+## Model selection
+CLIP has documented Transformers.js ONNX support and successfully ran real browser inference in this project. An experimental MobileCLIP-S2 pipeline failed to load in the tested configuration and was not selected. Hosted vision APIs were not used: no suitable configured API credential was established, and an API would introduce image transfer and per-request costs. No model accuracy claim is made; see TEST_REPORT.md.
 
 ## Sources
-
-- https://huggingface.co/docs/transformers.js/api/pipelines
 - https://huggingface.co/Xenova/clip-vit-base-patch32
+- https://huggingface.co/docs/transformers.js/api/pipelines
+- https://www.swm.cpcb.gov.in/
+- https://www.pib.gov.in/PressReleasePage.aspx?PRID=2219676
+- Test photos: TrashNet (Gary Thung / Mindy Yang), mirror https://github.com/Ebuka24Stephen/trashnet-dataset
+- Additional diagnostic photos: https://huggingface.co/datasets/UdaraChamidu/Garbage-Classification-with-12-classes
+
+## Presentation explanation
+“The vision model compares image features with text descriptions. A separate policy layer translates a user-confirmed item into a disposal route. The model does not know our local collection rules. We deliberately separate recognition, human confirmation and handling advice, and show uncertainty rather than treating a similarity score as accuracy.”
+
+### Reproduce browser checks
+Run `python3 tests/download_fixtures.py` (downloads a ~251 MB archive), start `npm run preview -- --port 5173` after building, then run `node tests/inference.mjs` and `node tests/browser-workflow.mjs`. Test screenshots remain local.

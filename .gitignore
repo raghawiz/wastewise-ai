@@ -1,3 +1,9 @@
 node_modules/
+dist/
+.env*
+!.env.example
 .vercel/
-.DS_Store
+test-results/
+fixtures/
+*.png
+qa-results.json
