@@ -1,0 +1,100 @@
+
+import React,{useEffect,useRef,useState} from 'react';
+import {createRoot} from 'react-dom/client';
+import {Leaf,ArrowUpRight,ArrowRight,Upload,Camera,Recycle,Trash2,Battery,Smartphone,ShieldCheck,Check,ScanLine,X,Image as ImageIcon,LoaderCircle,AlertTriangle,ChevronDown,Lock,CheckCircle2,RefreshCw} from 'lucide-react';
+import {categories,items,interpret,getAdvice} from './data.js';
+import './style.css';
+const icons={leaf:Leaf,recycle:Recycle,trash:Trash2,battery:Battery,phone:Smartphone,shield:ShieldCheck};
+function Bin({category,small=false}){const Icon=icons[category.symbol];return <div className={'bin-scene '+(small?'small':'')} style={{'--bin':category.color}} aria-hidden="true"><div className="bin-lid"/><div className="bin-body"><Icon size={small?24:38}/><span>WASTEWISE</span></div><div className="bin-shadow"/></div>}
+const steps=[
+['Your photo','Start with one item, well lit and clearly visible. Photos remain on your device.'],
+['Preprocessing','The browser resizes the image to a maximum of 1024 pixels. CLIP then performs its own resize, crop and normalisation.'],
+['Vision model','Quantised CLIP ViT-B/32 compares image features with text descriptions using WebAssembly in a background worker.'],
+['Visual suggestion','The closest descriptions are ranked. Similarity scores are relative to this candidate list, not probabilities of correctness.'],
+['Disposal guidance','You confirm the item and its condition. A separate, editable rules layer maps it to a collection stream and handling advice.']
+];
+function App(){
+const [photo,setPhoto]=useState(null),[error,setError]=useState(''),[status,setStatus]=useState(''),[busy,setBusy]=useState(false),[single,setSingle]=useState(false),[result,setResult]=useState(null),[chosen,setChosen]=useState(''),[confirmed,setConfirmed]=useState(false),[source,setSource]=useState('ai'),[condition,setCondition]=useState('clean'),[drag,setDrag]=useState(false),[step,setStep]=useState(0),[camera,setCamera]=useState(false),[cameraError,setCameraError]=useState(''),[guide,setGuide]=useState('all');
+const input=useRef(),captureInput=useRef(),worker=useRef(),timer=useRef(),video=useRef(),stream=useRef(),serial=useRef(0);
+useEffect(()=>()=>{worker.current?.terminate();clearTimeout(timer.current);stream.current?.getTracks().forEach(t=>t.stop());},[]);
+useEffect(()=>{if(camera&&video.current&&stream.current){video.current.srcObject=stream.current;video.current.play().catch(()=>setCameraError('Camera playback failed. Use a photo instead.'));}},[camera]);
+function stopCamera(){stream.current?.getTracks().forEach(t=>t.stop());stream.current=null;setCamera(false);}
+async function select(file){
+if(!file)return;
+const ticket=++serial.current;
+setError('');setResult(null);setConfirmed(false);setChosen('');setSingle(false);setCondition('clean');setPhoto(null);
+if(!['image/jpeg','image/png','image/webp'].includes(file.type)){setError('Choose a JPG, PNG or WebP photo. HEIC, GIF and SVG are not supported.');return;}
+if(file.size>12*1024*1024){setError('This file is larger than 12 MB. Export a smaller photo and try again.');return;}
+const url=URL.createObjectURL(file);
+try{const img=new window.Image();img.src=url;await img.decode();
+if(ticket!==serial.current)return;
+if(!img.width||!img.height||img.width*img.height>50000000)throw Error('Image dimensions are unsupported. Export a smaller image.');
+const scale=Math.min(1,1024/Math.max(img.width,img.height));const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);setPhoto(canvas.toDataURL('image/jpeg',.9));setStatus('');
+}catch(e){if(ticket===serial.current)setError('We could not decode this photo. Try a different JPG, PNG or WebP image.');}finally{URL.revokeObjectURL(url);}}
+function reset(){++serial.current;setPhoto(null);setResult(null);setChosen('');setConfirmed(false);setSingle(false);setError('');setStatus('');if(input.current)input.current.value='';}
+function cancel(){worker.current?.terminate();worker.current=null;clearTimeout(timer.current);setBusy(false);setStatus('Analysis cancelled. You can retry.');}
+function analyze(){
+if(!photo||!single||busy)return;
+setBusy(true);setError('');setResult(null);setConfirmed(false);setChosen('');setCondition('clean');setSource('ai');setStatus('Preparing the model. First use downloads model files and can take several minutes.');
+if(!worker.current)worker.current=new Worker(new URL('./worker.js',import.meta.url),{type:'module'});
+const fail=msg=>{clearTimeout(timer.current);worker.current?.terminate();worker.current=null;setBusy(false);setStatus('');setError(msg);};
+worker.current.onerror=()=>fail('The AI worker could not start. Try an updated Chrome or Edge browser, then retry. No prediction was generated.');
+worker.current.onmessage=({data})=>{
+if(data.type==='progress')setStatus('Downloading '+data.file+' · '+Math.round(data.progress||0)+'% of this file');
+if(data.type==='analyzing')setStatus('Reading the image and comparing visual features…');
+if(data.type==='error')fail('AI could not run. Check your connection and available memory, then retry. No prediction was generated.');
+if(data.type==='result'){clearTimeout(timer.current);const r=interpret(data.results);setResult(r);setChosen(r.item?.id||'');setStatus('Analysis complete. Review the suggestion below.');setBusy(false);}
+};
+timer.current=setTimeout(()=>fail('The model took longer than 5 minutes. Retry on a stable connection. No prediction was generated.'),300000);
+worker.current.postMessage({image:photo});
+}
+async function startCamera(){
+setCameraError('');
+if(!navigator.mediaDevices?.getUserMedia){captureInput.current.click();return;}
+try{stream.current=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});setCamera(true);}
+catch{setCameraError('Camera access is unavailable or was denied. Upload a photo, or use your phone’s camera picker.');}
+}
+function snap(){const v=video.current;if(!v?.videoWidth)return;const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);c.toBlob(b=>{stopCamera();select(new File([b],'camera.jpg',{type:'image/jpeg'}));},'image/jpeg',.9);}
+const item=items.find(i=>i.id===chosen),disposal=getAdvice(item,condition);
+return <>
+<header><a className="brand" href="#" aria-label="WasteWise home"><span className="brand-icon"><Leaf size={22}/></span>WasteWise<span className="ai-tag">AI</span></a><nav aria-label="Main navigation"><a href="#identify">Identify waste</a><a href="#guide">Segregation guide</a><a href="#how">How it works</a></nav><a className="nav-cta" href="#identify">Sort smarter <ArrowUpRight size={16}/></a></header>
+<main>
+<section className="hero"><div className="hero-copy"><div className="eyebrow"><span className="live-dot"/> SMALL ACTIONS. CLEANER TOMORROWS.</div><h1>A better place<br/>for <em>every piece.</em></h1><p>Not sure where it goes? Take a photo.<br className="desktop-break"/> Get a visual suggestion. Give your waste the right next step.</p><a className="button primary" href="#identify">Identify your waste <ArrowUpRight size={19}/></a><div className="hero-proof"><span><Lock size={14}/> Photos stay on your device</span><span><Check size={14}/> No API key needed</span></div></div><div className="hero-art"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><span className="art-label"><Leaf size={15}/> A little care goes a long way</span><div className="hero-bins">{[categories[1],categories[0],categories[3]].map(c=><Bin key={c.id} category={c}/>)}</div><div className="art-note"><span className="check-disc"><Check size={18}/></span><div><b>One item. A thoughtful choice.</b><small>Separate today. Recover tomorrow.</small></div></div><span className="art-caption">ILLUSTRATION · COLOURS ARE NOT LOCAL BIN RULES</span></div></section>
+<div className="principles"><span><ScanLine/> Real image analysis</span><span><Recycle/> Six clear categories</span><span><ShieldCheck/> Honest about uncertainty</span><span><Leaf/> Made for everyday impact</span></div>
+<section className="identify section" id="identify"><div className="section-heading"><div><span className="eyebrow">01 / THE SMARTER SORT</span><h2>One photo. A clearer next step.</h2></div><p>Start with a single item on a simple background.<br/>We’ll help you decide what happens next.</p></div>
+<div className="workspace"><div className="upload-panel"><div className="panel-label"><span className="number">1</span> Add your photo <span className="subtle">JPG, PNG, WEBP · UP TO 12 MB</span></div>
+<input ref={input} id="photo-upload" className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={e=>select(e.target.files[0])}/>
+<input ref={captureInput} className="sr-only" aria-label="Take a photo" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={busy} onChange={e=>select(e.target.files[0])}/>
+<div className={'dropzone '+(drag?'drag ':'')+(photo?'has-photo':'')} onDragOver={e=>{e.preventDefault();if(!busy)setDrag(true);}} onDragLeave={()=>setDrag(false)} onDrop={e=>{e.preventDefault();setDrag(false);if(!busy){if(e.dataTransfer.files.length!==1){setError('Upload one photo at a time.');return;}select(e.dataTransfer.files[0]);}}}>
+{photo?<><img src={photo} alt="Your selected waste item" className="preview"/>{!busy&&<button className="remove-photo" aria-label="Remove photo" onClick={reset}><X size={18}/></button>}<span className="photo-tag"><ImageIcon size={13}/> Your photo · processed locally</span></>:<><div className="upload-symbol"><Upload size={30}/></div><h3>Drop a photo here</h3><p>Give one item your undivided attention.</p><button className="button primary" onClick={()=>input.current.click()}>Choose a photo <ArrowUpRight size={17}/></button><span className="or">or drag & drop it here</span></>}
+</div>
+<div className="upload-actions"><button className="button light" disabled={busy} onClick={startCamera}><Camera size={17}/> Use camera</button>{photo&&<button className="text-button" disabled={busy} onClick={()=>input.current.click()}>Change photo</button>}<span className="local-note"><Lock size={13}/> Private by design</span></div>
+{cameraError&&<p role="alert" className="notice">{cameraError}</p>}
+{photo&&<><label className="single-check"><input type="checkbox" checked={single} disabled={busy} onChange={e=>setSingle(e.target.checked)}/><span>This photo shows <b>one main item</b>. For mixed waste, I’ll upload each item separately.</span></label><button className="button primary analyze" disabled={!single||busy} onClick={analyze}>{busy?<LoaderCircle className="spin" size={18}/>:<ScanLine size={18}/>} {busy?'Analyzing your photo…':'Identify waste'} {!busy&&<ArrowRight size={18}/>}</button></>}
+{busy&&<div className="loading-area"><div className="loading-line"/><button className="text-button" onClick={cancel}>Cancel analysis</button></div>}
+<p className="status" role="status" aria-live="polite">{status||'First scan downloads the AI model. Later scans can use cached files.'}</p>{error&&<div className="error" role="alert"><AlertTriangle size={19}/><span>{error}</span></div>}
+</div>
+<div className="result-panel" aria-live="polite"><div className="panel-label"><span className="number">2</span> Understand & sort</div>
+{!result?<div className="empty-result"><div className={'scan-art '+(busy?'scanning':'')}><ScanLine size={70} strokeWidth={1}/><Leaf size={25}/></div><span className="eyebrow">{busy?'LOOKING A LITTLE CLOSER':'GOOD CHOICES START HERE'}</span><h3>{busy?'Finding the closest visual match…':'Your item’s next chapter.'}</h3><p>{busy?'Real computer vision is running in your browser. This can take longer on older devices.':'Your photo, a suggested identity, and a clear collection route—all in one place.'}</p><div className="result-path"><span>Photo</span><ArrowRight size={14}/><span>Identify</span><ArrowRight size={14}/><span>Sort</span></div><small>Material, contamination and local acceptance need your confirmation.</small></div>:
+<div className="result-content"><div className={'result-flag '+(result.uncertain?'uncertain':'')}>{result.uncertain?<AlertTriangle size={15}/>:<ScanLine size={15}/>} {result.uncertain?'Needs your review':'AI visual suggestion · verify before sorting'}</div><h3 className="item-title">{result.item?.name||'No reliable waste match'}</h3><p className="result-reason">{result.reason}</p>
+<div className="matches"><div className="matches-heading">Closest visual matches <span>Relative score · not confidence</span></div>{result.ranked.map(r=><div className="match" key={r.label}><span>{items.find(i=>i.prompt===r.label)?.name||r.label}</span><span className="match-track"><i style={{width:(r.score*100)+'%'}}/></span><b>{r.score.toFixed(3)}</b></div>)}</div>
+<div className="confirm-box"><label htmlFor="correction">Confirm or correct the item</label><div className="select-wrap"><select id="correction" value={chosen} onChange={e=>{setChosen(e.target.value);setConfirmed(false);setSource('manual');setCondition('clean');}}><option value="">Choose an item / unknown</option>{items.map(i=><option key={i.id} value={i.id}>{i.name}</option>)}</select><ChevronDown size={16}/></div>
+{item&&<><label htmlFor="condition">What is its condition?</label><div className="select-wrap"><select id="condition" value={condition} onChange={e=>{setCondition(e.target.value);setConfirmed(false);}}><option value="clean">Ordinary household item / no chemical contamination</option><option value="soiled">Food-soiled</option><option value="chemical">Chemical contamination or chemical contents</option></select><ChevronDown size={16}/></div><button className="button primary confirm" onClick={()=>setConfirmed(true)}><Check size={17}/> Confirm & show disposal</button></>}
+{!item&&<p className="notice">Try a closer, well-lit photo. If this is a needle, unknown chemical or other unsafe item, avoid handling it and contact an appropriate collection service.</p>}</div>
+{confirmed&&disposal&&<div className="disposal-card" style={{'--category':disposal.category.color}}><div className="disposal-top"><span className="category-badge">{disposal.category.name}{disposal.category.name.endsWith('Waste')?'':' Waste'}</span><small>{source==='manual'?'MANUALLY CORRECTED':'USER-CONFIRMED SUGGESTION'}</small></div><div className="disposal-main"><Bin category={disposal.category} small/><div><span className="eyebrow">THE RIGHT NEXT STEP</span><h4>{disposal.advice}</h4></div></div><p><b>Why this stream?</b> {disposal.category.why}</p><div className="avoid"><AlertTriangle size={15}/>{disposal.category.avoid}</div><small>Check your local collector’s acceptance rules. Illustration colours are not municipal bin instructions.</small></div>}
+</div>}
+</div></div><div className="model-note"><ShieldCheck size={17}/><p><b>A helpful second opinion, not a material test.</b> CLIP matches your image to a limited set of descriptions. It can be confidently wrong and does not detect every object. No accuracy percentage is claimed.</p></div></section>
+<section className="guide-section section" id="guide"><div className="section-heading"><div><span className="eyebrow">02 / KNOW YOUR STREAMS</span><h2>Six categories. Less confusion.</h2></div><p>Keep valuable materials recoverable.<br/>Keep special waste safely separate.</p></div><div className="filter-row" role="group" aria-label="Filter waste guide">{[['all','All categories'],['everyday','Everyday waste'],['special','Special handling']].map(([value,label])=><button key={value} className={guide===value?'active':''} onClick={()=>setGuide(value)}>{label}</button>)}</div>
+<div className="category-grid">{categories.filter((c,i)=>guide==='all'||(guide==='everyday'?i<3:i>=3)).map(c=><article className="category-card" key={c.id} style={{'--category':c.color}}><div className="category-top"><span className="category-index">0{categories.indexOf(c)+1}</span><Bin category={c} small/></div><h3>{c.name}{c.id==='hazard'||c.id==='sanitary'?'':' Waste'}</h3><p className="examples">{c.examples}</p><p>{c.action}</p><details><summary>What to watch for <span>+</span></summary><p>{c.avoid}</p></details></article>)}</div><p className="rule-note">These six educational categories are not six nationally mandated bin colours. India’s 2026 SWM framework specifies wet, dry, sanitary and special-care streams; batteries and electronics have separate rules. Follow your local collection system. <a href="https://www.swm.cpcb.gov.in/" target="_blank" rel="noreferrer">CPCB guidance <ArrowUpRight size={13}/></a></p></section>
+<section className="how-section section" id="how"><div className="how-intro"><span className="eyebrow">03 / NO BLACK BOX PROMISES</span><h2>A little vision.<br/>A lot more clarity.</h2><p>Real image analysis meets practical disposal guidance. Explore what happens between the photo and the recommendation.</p><span className="tech-pill">CLIP ViT-B/32 · ONNX · WebAssembly</span></div><div className="pipeline"><div className="pipeline-tabs" role="tablist" aria-label="AI processing steps">{steps.map((s,i)=><button role="tab" id={'tab-'+i} aria-controls="pipeline-detail" aria-selected={step===i} key={s[0]} className={step===i?'active':''} onClick={()=>setStep(i)}><span>0{i+1}</span>{s[0]}<ArrowRight size={15}/></button>)}</div><div id="pipeline-detail" role="tabpanel" aria-labelledby={'tab-'+step} className="pipeline-detail"><span>STEP 0{step+1} / 05</span><h3>{steps[step][0]}</h3><p>{steps[step][1]}</p></div></div></section>
+<section className="section habits"><div className="section-heading"><div><span className="eyebrow">04 / BETTER EVERYDAY HABITS</span><h2>Small details. Real differences.</h2></div></div><div className="habits-grid">{[
+['The bottle isn’t the problem.','Leftover liquid can soil otherwise recyclable paper.','Empty your bottle; keep the recycling stream dry.','Don’t toss a half-full drink into clean recyclables.'],
+['A battery needs its own route.','Separating batteries protects workers and recovery facilities.','Use an authorised battery take-back point.','Don’t crush, burn or mix batteries into ordinary waste.'],
+['Keep food in the loop.','Clean organic waste can become compost or biogas.','Separate peels from their plastic packaging.','Don’t put compostable-looking plastic in home compost without verification.']
+].map(([title,body,yes,no])=><article key={title}><h3>{title}</h3><p>{body}</p><div className="do"><CheckCircle2 size={17}/>{yes}</div><div className="dont"><X size={17}/>{no}</div></article>)}</div></section>
+<section className="closing"><Leaf size={30}/><h2>The best time to separate waste?<br/><em>Before it gets mixed.</em></h2><p>Segregation at source protects workers, reduces contamination,<br/>and gives useful materials a chance to be used again.</p><a href="#identify" className="button cream">Start with one item <ArrowUpRight size={18}/></a></section>
+</main><footer><a className="brand" href="#"><span className="brand-icon"><Leaf size={19}/></span>WasteWise<span className="ai-tag">AI</span></a><p>Thoughtful sorting. A shared responsibility.</p><div><a href="https://huggingface.co/Xenova/clip-vit-base-patch32" target="_blank" rel="noreferrer">About the model</a><a href="https://github.com/raghawiz/wastewise-ai" target="_blank" rel="noreferrer">Source code</a></div></footer>
+{camera&&<div className="modal-backdrop"><section className="camera-modal" role="dialog" aria-modal="true" aria-label="Photograph your waste item"><div><h3>Frame one item</h3><button autoFocus className="text-button" aria-label="Close camera" onClick={stopCamera}><X/></button></div><video ref={video} autoPlay playsInline muted/><p>Keep the object centred with a plain background.</p><button className="button primary" onClick={snap}><Camera size={18}/> Capture photo</button><button className="text-button" onClick={stopCamera}>Cancel</button></section></div>}
+</>;
+}
+createRoot(document.getElementById('root')).render(<App/>);
